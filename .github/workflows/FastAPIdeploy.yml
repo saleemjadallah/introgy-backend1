@@ -27,13 +27,13 @@ jobs:
 
     - name: Package backend code
       run: |
-        zip -r introgy-backend.zip introgy-backend
+        zip -r app.zip app requirements.txt README.md
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: backend-package
-        path: introgy-backend.zip
+        path: app.zip
 
   deploy:
     needs: build-and-deploy
@@ -60,19 +60,19 @@ jobs:
         EC2_HOST: "ubuntu@3.28.199.179"
       run: |
         # Transfer backend package
-        scp -o StrictHostKeyChecking=accept-new introgy-backend.zip ${EC2_HOST}:~/
+        scp -o StrictHostKeyChecking=accept-new app.zip ${EC2_HOST}:~/
 
         # Unzip and deploy on EC2
         ssh ${EC2_HOST} "
-          rm -rf ~/introgy-backend-old
-          mv ~/introgy-backend ~/introgy-backend-old 2>/dev/null || true
-          unzip -o ~/introgy-backend.zip -d ~/
-          cd ~/introgy-backend
+          rm -rf ~/app-old
+          mv ~/app ~/app-old 2>/dev/null || true
+          unzip -o ~/app.zip -d ~/
+          cd ~/app
           if [ ! -d venv ]; then python3 -m venv venv; fi
           source venv/bin/activate
-          pip install -r requirements.txt
+          pip install -r ../requirements.txt
           sudo systemctl restart introgy-backend
-          rm ~/introgy-backend.zip
+          rm ~/app.zip
         "
 
     - name: Send deployment notification
