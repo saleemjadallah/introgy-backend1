@@ -1,0 +1,15 @@
+[Unit]
+Description=Introgy Backend Service
+After=network.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/introgy-backend
+Environment="PATH=/home/ubuntu/introgy-backend/venv/bin"
+Environment="PYTHONPATH=/home/ubuntu/introgy-backend"
+Environment="ENVIRONMENT=production"
+ExecStart=/home/ubuntu/introgy-backend/venv/bin/python run.py
+
+[Install]
+WantedBy=multi-user.target 
