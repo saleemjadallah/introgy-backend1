@@ -1,15 +1,28 @@
 [Unit]
 Description=Introgy Backend Service
 After=network.target
+StartLimitIntervalSec=0
 
 [Service]
+Type=simple
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/introgy-backend
 Environment="PATH=/home/ubuntu/introgy-backend/venv/bin"
 Environment="PYTHONPATH=/home/ubuntu/introgy-backend"
 Environment="ENVIRONMENT=production"
+Environment="FRONTEND_URL=https://introgy.app"
+
+# Restart configuration
+Restart=always
+RestartSec=1
+
+# Execute
 ExecStart=/home/ubuntu/introgy-backend/venv/bin/python run.py
+
+# Logging
+StandardOutput=append:/var/log/introgy/backend.log
+StandardError=append:/var/log/introgy/backend.error.log
 
 [Install]
 WantedBy=multi-user.target 
