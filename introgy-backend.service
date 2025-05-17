@@ -1,6 +1,6 @@
 [Unit]
 Description=Introgy Backend Service
-After=network.target
+After=network.target mongodb.service
 StartLimitIntervalSec=0
 
 [Service]
@@ -16,6 +16,8 @@ Environment="FRONTEND_URL=https://introgy.app"
 # Restart configuration
 Restart=always
 RestartSec=1
+StartLimitBurst=5
+StartLimitIntervalSec=10
 
 # Execute
 ExecStart=/home/ubuntu/introgy-backend/venv/bin/python run.py
@@ -23,6 +25,11 @@ ExecStart=/home/ubuntu/introgy-backend/venv/bin/python run.py
 # Logging
 StandardOutput=append:/var/log/introgy/backend.log
 StandardError=append:/var/log/introgy/backend.error.log
+
+# Security
+NoNewPrivileges=yes
+ProtectSystem=full
+PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target 
