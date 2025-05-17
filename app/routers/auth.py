@@ -4,13 +4,17 @@ import random
 from typing import Any, Dict, Optional
 import os
 import logging
-import requests
 import certifi
+from pathlib import Path
+from dotenv import load_dotenv
+import requests
 
 # Third-party imports
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail, Email, To, Content, HtmlContent
 
 # Local imports
 from app.core.security import (
@@ -21,6 +25,10 @@ from app.core.security import (
     verify_password,
 )
 from app.models.user import User, UserCreate, UserInDB
+
+# Load environment variables
+env_path = Path(__file__).parent.parent.parent / 'Email.env'
+load_dotenv(dotenv_path=env_path)
 
 # Setup logging
 logging.basicConfig(
@@ -69,47 +77,29 @@ async def send_email(to_email: str, subject: str, html_content: str) -> Dict[str
         logger.info(f"Using FROM_EMAIL: {FROM_EMAIL}")
         logger.info(f"Using FROM_NAME: {FROM_NAME}")
         
-        # Prepare SendGrid request
-        headers = {
-            "Authorization": f"Bearer {SENDGRID_API_KEY}",
-            "Content-Type": "application/json"
-        }
+        # Initialize SendGrid client
+        sg = SendGridAPIClient(api_key=SENDGRID_API_KEY)
         
-        data = {
-            "personalizations": [
-                {
-                    "to": [{"email": to_email}]
-                }
-            ],
-            "from": {
-                "email": FROM_EMAIL,
-                "name": FROM_NAME
-            },
-            "subject": subject,
-            "content": [{
-                "type": "text/html",
-                "value": html_content
-            }]
-        }
-        
-        # Send request
-        response = requests.post(
-            SENDGRID_API_URL,
-            headers=headers,
-            json=data,
-            verify=certifi.where(),
-            timeout=30
+        # Create email message
+        message = Mail(
+            from_email=Email(FROM_EMAIL, FROM_NAME),
+            to_emails=To(to_email),
+            subject=subject,
+            html_content=HtmlContent(html_content)
         )
+        
+        # Send email
+        response = sg.send(message)
         
         # Log response
         logger.info(f"SendGrid Response Status: {response.status_code}")
-        logger.info(f"SendGrid Response Headers: {dict(response.headers)}")
-        logger.info(f"SendGrid Response Body: {response.text}")
+        logger.info(f"SendGrid Response Headers: {response.headers}")
+        logger.info(f"SendGrid Response Body: {response.body}")
         
         if response.status_code in [200, 201, 202]:
             return {"success": True, "message": "Email sent successfully"}
         else:
-            error_msg = f"Failed to send email. Status: {response.status_code}, Body: {response.text}"
+            error_msg = f"Failed to send email. Status: {response.status_code}, Body: {response.body}"
             logger.error(error_msg)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -140,7 +130,7 @@ async def send_verification_code(request: Request, verification: VerificationReq
     
     try:
         # Check if user exists
-        user = await request.app.mongodb["users"].find_one({"email": verification.email})
+        user = await request.app.mongodb["IntrogyUsers"].find_one({"email": verification.email})
         logger.info(f"User exists check result: {user is not None}")
         
         # Generate and store OTP
@@ -222,7 +212,7 @@ async def verify_otp(request: Request, verification: OTPVerification) -> Dict[st
     
     try:
         # Mark user as verified
-        result = await request.app.mongodb["users"].update_one(
+        result = await request.app.mongodb["IntrogyUsers"].update_one(
             {"email": verification.email},
             {"$set": {"is_verified": True}}
         )
@@ -329,10 +319,10 @@ async def debug_force_register(request: Request, user: UserCreate):
     
     try:
         # Check if user already exists
-        existing_user = await request.app.mongodb["users"].find_one({"email": user.email})
+        existing_user = await request.app.mongodb["IntrogyUsers"].find_one({"email": user.email})
         if existing_user:
             # If user exists, update password and set verified
-            result = await request.app.mongodb["users"].update_one(
+            result = await request.app.mongodb["IntrogyUsers"].update_one(
                 {"email": user.email},
                 {"$set": {
                     "hashed_password": get_password_hash(user.password),
@@ -351,7 +341,7 @@ async def debug_force_register(request: Request, user: UserCreate):
                 "created_at": datetime.utcnow(),
             }
             # Insert user into database
-            await request.app.mongodb["users"].insert_one(user_dict)
+            await request.app.mongodb["IntrogyUsers"].insert_one(user_dict)
             message = "User created and verified"
         
         # Create access token

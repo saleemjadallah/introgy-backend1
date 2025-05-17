@@ -122,7 +122,7 @@ async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)
             raise credentials_exception
         
         # Get user from database
-        user = await request.app.mongodb["users"].find_one({"email": email})
+        user = await request.app.mongodb["IntrogyUsers"].find_one({"email": email})
         
         if user is None:
             raise credentials_exception

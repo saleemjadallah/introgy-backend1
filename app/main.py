@@ -103,7 +103,7 @@ async def shutdown_db_client():
         logger.info("Closed MongoDB connection")
 
 # Include routers with distinct prefixes
-app.include_router(main_router, prefix="/api/main")
+app.include_router(main_router, prefix="/api")
 app.include_router(auth_router, prefix="/api/auth")
 
 

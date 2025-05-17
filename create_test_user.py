@@ -24,13 +24,13 @@ async def insert_test_user():
     db = client.get_default_database()
     
     # Check if user already exists
-    existing_user = await db["users"].find_one({"email": "support@introgy.ai"})
+    existing_user = await db["IntrogyUsers"].find_one({"email": "support@introgy.ai"})
     if existing_user:
         print("User already exists, no need to create again.")
         return
     
     # Create test user
-    await db["users"].insert_one({
+    await db["IntrogyUsers"].insert_one({
         "email": "support@introgy.ai",
         "hashed_password": "test_password",
         "display_name": "Support",
