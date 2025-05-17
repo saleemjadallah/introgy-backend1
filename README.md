@@ -162,11 +162,79 @@ For production deployment, follow these steps:
 
 ### Troubleshooting
 
-If you encounter ModuleNotFoundError:
-- Make sure `PYTHONPATH` includes the root directory of the project
-- Verify all imports are absolute rather than relative
-- Check that `__init__.py` files exist in all package directories
-- Ensure the systemd service has the correct environment variables
+#### API Docs (/docs, /redoc) Not Found (404 Error)
+
+If you encounter a "404 Not Found" error when trying to access `https://yourdomain.com/docs` or `https://yourdomain.com/redoc`, even if the main API seems to be running (e.g., `https://yourdomain.com/` returns a 200 OK), it might be due to issues with how the FastAPI application is configured or being served in the production environment.
+
+**Symptoms:**
+- Main API endpoints (e.g., `/api/...`) might be working.
+- Direct access to `/docs` or `/redoc` via the browser or `curl` returns a 404, sometimes with `{"detail":"Not Found"}`.
+- Nginx logs might show 404s being returned from the backend Uvicorn process for these paths.
+
+**Potential Causes & Solutions:**
+
+1.  **Incorrect FastAPI Configuration in `app/main.py`:**
+    *   **Problem:** The `docs_url` or `redoc_url` parameters in the `FastAPI()` constructor might be incorrect, conditionally disabled in production, or pointing to a namespaced path (e.g., `/api/docs`) that conflicts with router prefixes.
+    *   **Solution:** Ensure these are set correctly and are not disabled for your production environment. In our case, the fix was to ensure they were set to root paths:
+        ```python
+        # In app/main.py
+        app = FastAPI(
+            # ... other parameters ...
+            docs_url="/docs",
+            redoc_url="/redoc"
+        )
+        ```
+
+2.  **Code Changes Not Reflected on the Server:**
+    *   **Problem:** Edits made to the Python files (e.g., `app/main.py`, `run.py`) in a local development environment or via automated tools might not have been correctly applied or deployed to the actual files being run by the `systemd` service on the production server. The service might be running an older version of the code or code from an unexpected location.
+    *   **Solution:**
+        *   **Verify Service Configuration:** Double-check your `systemd` service file (e.g., `introgy-backend.service`) to confirm the `WorkingDirectory` and `ExecStart` paths point to the correct location of your backend code on the server (e.g., `/home/ubuntu/introgy-backend`).
+        *   **Manually Edit Files on Server:** Connect to your server (e.g., via SSH) and directly edit the Python files in the service's `WorkingDirectory` to apply the necessary changes (like the `docs_url` fix above).
+        *   **Ensure `run.py` Uses Production Settings:** For production, `run.py` should typically run Uvicorn with `reload=False` and pass the `app` object directly, not as a string for auto-reloading.
+            ```python
+            # In run.py
+            from app.main import app # Import the app object
+            # ...
+            uvicorn.run(
+                app,             # Pass the app object
+                host="0.0.0.0",
+                port=8000,
+                reload=False     # Essential for production
+            )
+            ```
+        *   **Restart Service:** After making changes directly on the server, always restart the service: `sudo systemctl restart your-service-name.service` (e.g., `sudo systemctl restart introgy-backend.service`).
+        *   **Clear Python Bytecode Cache (If Suspected):** In rare cases, old bytecode files (`.pyc`) might cause issues. You can try removing them from your project directory on the server: `sudo find /path/to/your/project -name '*.pyc' -delete` and then restart the service.
+
+3.  **Nginx Configuration:**
+    *   **Problem:** While less likely if other API routes work, ensure your Nginx configuration correctly proxies requests for `/docs`, `/redoc`, and `/openapi.json` to the backend service without stripping or altering the path in an unintended way.
+    *   **Solution:** Review the `location` blocks in your Nginx site configuration. For FastAPI with docs at the root, a general proxy pass for `/` and `/api/` might be sufficient, but ensure the docs paths are not inadvertently caught or blocked by a more specific, incorrect rule.
+        Example Nginx `location` blocks for docs and API:
+        ```nginx
+        location ~ ^/(docs|redoc|openapi\.json)$ {
+            proxy_pass http://127.0.0.1:8000;
+            # ... other proxy headers ...
+        }
+
+        location /api/ {
+            proxy_pass http://127.0.0.1:8000/api/;
+            # ... other proxy headers ...
+        }
+
+        location / {
+            proxy_pass http://127.0.0.1:8000;
+            # ... other proxy headers ...
+        }
+        ```
+        *Ensure these are ordered correctly (more specific paths first) if you have multiple location blocks.*
+
+**Diagnostic Steps Used in This Case:**
+*   Checked Nginx access and error logs: `/var/log/nginx/introgy.access.log`, `/var/log/nginx/introgy.error.log`.
+*   Checked backend service status and logs: `sudo systemctl status introgy-backend.service`, `sudo journalctl -u introgy-backend.service -n 50 --no-pager | cat`.
+*   Bypassed Nginx to test backend directly: `curl -I http://127.0.0.1:8000/docs`.
+*   Added temporary diagnostic `print()` statements in `app/main.py` (after `app = FastAPI(...)`) and in `run.py` to log the actual `docs_url` and the path of the loaded `app.main` module, then checked service logs for this output.
+*   Verified the running process's CWD and command: `systemctl show -p MainPID --value introgy-backend.service`, then `pwdx <PID>` and `ps -p <PID> -o cmd --no-headers`.
+
+By following these steps, we confirmed the FastAPI application instance running on the server did not have the correct `docs_url` until the `app/main.py` file was manually corrected on the server and the service restarted.
 
 ## Deployment
 

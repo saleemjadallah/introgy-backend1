@@ -62,6 +62,15 @@ class PasswordReset(BaseModel):
     email: EmailStr
     new_password: str
 
+class UserPreferencesUpdate(BaseModel):
+    communicationPreference: Optional[str] = None
+    socialBatteryLevel: Optional[int] = None
+    rechargeActivities: Optional[list[str]] = None
+    preferredGroupSize: Optional[int] = None
+    onboardingCompleted: Optional[bool] = None
+    onboardingCompletedAt: Optional[datetime] = None
+    preferences: Optional[Dict[str, Any]] = None
+
 def generate_otp(length: int = 6) -> str:
     """Generate a random OTP of specified length."""
     return ''.join([str(random.randint(0, 9)) for _ in range(length)])
@@ -424,4 +433,126 @@ async def register_with_otp(request: Request, verification: Dict[str, Any]) -> D
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Registration failed: {str(e)}"
-        ) 
+        )
+
+async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
+    # Placeholder for additional checks like is_active if needed in the future
+    # For now, if get_current_user returns, the user is considered active.
+    return current_user
+
+@router.put("/users/me/preferences", response_model=Dict[str, Any])
+async def update_user_preferences(
+    request: Request,
+    preferences_update: UserPreferencesUpdate,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Update user preferences for the currently authenticated user.
+    This includes onboarding selections.
+    """
+    update_data = {}
+    if preferences_update.preferences is not None:
+        # If a general 'preferences' dict is provided, merge it first
+        update_data.update(preferences_update.preferences)
+
+    onboarding_related_updates = {
+        k: v for k, v in preferences_update.model_dump(exclude_unset=True, exclude_none=True).items()
+        if k != "preferences"
+    }
+    update_data.update(onboarding_related_updates)
+    
+    if not update_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No preference data provided."
+        )
+
+    if update_data.get("onboardingCompleted") is True and "onboardingCompletedAt" not in update_data:
+        update_data["onboardingCompletedAt"] = datetime.utcnow()
+    
+    try:
+        # The frontend seems to send a flat structure for preferences,
+        # and also has a top-level 'onboardingCompleted' field in the UserProfile model.
+        # We will store the detailed preferences under a 'preferences' sub-document in MongoDB,
+        # and also update the top-level 'onboardingCompleted' field on the User document
+        # for easier querying and consistency with potential existing user model structure.
+
+        mongo_update_payload = {"$set": {}}
+        
+        # Update the 'preferences' sub-document
+        mongo_update_payload["$set"]["preferences"] = update_data
+        
+        # If 'onboardingCompleted' is being set, also update the top-level field
+        if "onboardingCompleted" in update_data:
+            mongo_update_payload["$set"]["onboardingCompleted"] = update_data["onboardingCompleted"]
+        if "onboardingCompletedAt" in update_data and update_data.get("onboardingCompleted") is True:
+             mongo_update_payload["$set"]["onboardingCompletedAt"] = update_data["onboardingCompletedAt"]
+
+
+        result = await request.app.mongodb["IntrogyUsers"].update_one(
+            {"email": current_user.email},
+            mongo_update_payload
+        )
+        
+        if result.matched_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found."
+            )
+        
+        return {"success": True, "message": "Preferences updated successfully."}
+
+    except Exception as e:
+        logger.error(f"Error updating preferences for {current_user.email}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update preferences: {str(e)}"
+        )
+
+@router.post("/login", response_model=Token)
+async def login_for_access_token(
+    request: Request, 
+    form_data: OAuth2PasswordRequestForm = Depends()
+):
+    """
+    Standard OAuth2 password flow login.
+    """
+    logger.info(f"Login attempt for email: {form_data.username}")
+    user = await authenticate_user(request.app.mongodb["IntrogyUsers"], form_data.username, form_data.password)
+    if not user:
+        logger.warning(f"Authentication failed for email: {form_data.username}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Check if user is verified (if required by your application logic)
+    # if not user.get("is_verified"):
+    #     logger.warning(f"Login attempt for unverified email: {form_data.username}")
+    #     raise HTTPException(
+    #         status_code=status.HTTP_400_BAD_REQUEST,
+    #         detail="Email not verified. Please verify your email first."
+    #     )
+
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user["email"]}, expires_delta=access_token_expires
+    )
+    
+    logger.info(f"Login successful for user: {form_data.username}")
+    return {
+        "access_token": access_token, 
+        "token_type": "bearer",
+        "expires_in": int(access_token_expires.total_seconds())
+        # Add refresh token logic here if implemented
+    }
+
+# Make sure authenticate_user is defined or imported if it's not already in this file.
+# Assuming authenticate_user is similar to what's usually in FastAPI security examples:
+async def authenticate_user(db_conn, email: str, password: str) -> Optional[UserInDB]:
+    user_doc = await db_conn.find_one({"email": email})
+    if user_doc:
+        if verify_password(password, user_doc["hashed_password"]):
+            return UserInDB(**user_doc)
+    return None 

@@ -59,8 +59,8 @@ app = FastAPI(
     title="Introgy API",
     description="Backend API for Introgy - The Introvert's Social Battery Manager",
     version=VERSION,
-    docs_url="/api/docs" if not IS_PRODUCTION else None,
-    redoc_url="/api/redoc" if not IS_PRODUCTION else None
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
 # CORS configuration based on environment
@@ -82,6 +82,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Enhanced error handling middleware
+@app.middleware("http")
+async def log_requests(request, call_next):
+    start_time = datetime.utcnow()
+    try:
+        response = await call_next(request)
+        end_time = datetime.utcnow()
+        duration = (end_time - start_time).total_seconds()
+        logger.info(
+            f"Path: {request.url.path} | "
+            f"Method: {request.method} | "
+            f"Status: {response.status_code} | "
+            f"Duration: {duration:.3f}s"
+        )
+        return response
+    except Exception as e:
+        logger.error(
+            f"Request failed: {request.url.path} | "
+            f"Method: {request.method} | "
+            f"Error: {str(e)}"
+        )
+        raise
 
 # Database connection
 @app.on_event("startup")
@@ -137,4 +160,8 @@ async def root() -> Dict[str, Any]:
         "version": VERSION,
         "environment": ENVIRONMENT,
         "status": "running"
-    } 
+    }
+
+@app.get("/test-diag-route")
+async def test_diag_route():
+    return {"message": "Diagnostic route is working!"} 
