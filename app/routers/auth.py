@@ -358,4 +358,70 @@ async def debug_force_register(request: Request, user: UserCreate):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to force register user: {str(e)}"
+        )
+
+@router.post("/register-with-otp", response_model=Dict[str, Any])
+async def register_with_otp(request: Request, verification: Dict[str, Any]) -> Dict[str, Any]:
+    """Dedicated endpoint for registration with OTP verification."""
+    email = verification.get('email')
+    code = str(verification.get('code'))
+    password = verification.get('password')
+    display_name = verification.get('displayName') or verification.get('display_name') or email.split('@')[0]
+    
+    if not email or not code or not password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email, code, and password are required"
+        )
+    
+    # Verify OTP
+    otp_record = await request.app.mongodb["otps"].find_one({
+        "email": email,
+        "code": code,
+        "expires_at": {"$gt": datetime.utcnow()}
+    })
+    
+    if not otp_record:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification code"
+        )
+    
+    try:
+        # Delete used OTP
+        await request.app.mongodb["otps"].delete_one({"_id": otp_record["_id"]})
+        
+        # Create or update user
+        user_dict = {
+            "email": email,
+            "hashed_password": get_password_hash(password),
+            "display_name": display_name,
+            "is_verified": True,
+            "created_at": datetime.utcnow(),
+        }
+        
+        # Upsert the user
+        await request.app.mongodb["IntrogyUsers"].update_one(
+            {"email": email},
+            {"$set": user_dict},
+            upsert=True
+        )
+        
+        # Create access token
+        access_token = create_access_token(data={"sub": email})
+        
+        return {
+            "success": True,
+            "message": "Registration successful",
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": 60 * 24  # 24 hours
+        }
+        
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Registration failed: {str(e)}"
         ) 
